@@ -1,82 +1,58 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
-const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai');
 const googleTTS = require('google-tts-api');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config();
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ storage: multer.memoryStorage() });
 
-const WIT_AI_TOKEN = process.env.WIT_AI_TOKEN;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Initialize Gemini API
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+app.use(express.json());
 
-app.post('/process-audio', upload.single('audio'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).send('No audio file uploaded.');
-        }
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.send('ESP32 Voice Assistant Backend is Running!');
+});
 
-        const audioPath = req.file.path;
-        const audioBuffer = fs.readFileSync(audioPath);
+// Main endpoint for ESP32 voice / text prompt handling
+app.post('/process-voice', upload.single('audio'), async (req, res) => {
+  try {
+    const prompt = req.body.prompt || "Hello, tell me a short greeting.";
 
-        console.log("Sending audio to Wit.ai...");
-        const witResponse = await axios.post('https://api.wit.ai/speech', audioBuffer, {
-            headers: {
-                'Authorization': `Bearer ${WIT_AI_TOKEN}`,
-                'Content-Type': 'audio/raw;encoding=signed-integer;bits=16;rate=16000;endian=little'
-            }
-        });
+    // 1. Generate response from Gemini
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
 
-        let userText = "";
-        if (typeof witResponse.data === 'string') {
-            const lines = witResponse.data.trim().split('\n');
-            const lastLine = JSON.parse(lines[lines.length - 1]);
-            userText = lastLine.text || "";
-        } else {
-            userText = witResponse.data.text || "";
-        }
+    console.log("Gemini Response:", responseText);
 
-        console.log("User Said:", userText);
-        fs.unlinkSync(audioPath);
+    // 2. Generate Audio TTS URL
+    const ttsUrl = googleTTS.getAudioUrl(responseText, {
+      lang: 'en',
+      slow: false,
+      host: 'https://translate.google.com',
+      timeout: 10000,
+    });
 
-        if (!userText) {
-            return res.status(400).send("Speech not recognized.");
-        }
+    res.json({
+      success: true,
+      text: responseText,
+      audioUrl: ttsUrl
+    });
 
-        console.log("Sending text to Gemini...");
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: userText,
-            config: {
-                systemInstruction: "You are a helpful voice assistant. Keep your responses short, natural, and under 2-3 sentences for clear speech output."
-            }
-        });
-
-        const replyText = response.text;
-        console.log("Gemini Output:", replyText);
-
-        const ttsUrl = googleTTS.getAudioUrl(replyText, {
-            lang: 'bn',
-            slow: false,
-            host: 'https://translate.google.com',
-            timeout: 10000,
-        });
-
-        const audioStream = await axios.get(ttsUrl, { responseType: 'arraybuffer' });
-        
-        res.set('Content-Type', 'audio/mpeg');
-        res.send(Buffer.from(audioStream.data));
-
-    } catch (error) {
-        console.error("Error Processing Request:", error.message);
-        res.status(500).send("Internal Server Error");
-    }
+  } catch (error) {
+    console.error("Error processing request:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
