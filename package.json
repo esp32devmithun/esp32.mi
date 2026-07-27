@@ -1,16 +1,11 @@
 {
   "name": "esp32-voice-middleware",
   "version": "1.0.0",
-  "description": "Middleware server for ESP32 voice assistant using Wit.ai and Gemini",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/generative-ai": "*",
-    "axios": "*",
-    "express": "*",
-    "google-tts-api": "*",
-    "multer": "*"
+    "express": "^4.19.2"
   }
 }
